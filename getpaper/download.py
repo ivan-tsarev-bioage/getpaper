@@ -191,7 +191,9 @@ def try_download(doi: str,
                  scihub_on_fail: bool = False,
                  unpaywall_email: Optional[str] = None,
                  selenium_on_fail: bool = False,
-                 selenium_headless: bool=True, selenium_min_wait: int=12, selenium_max_wait: int=60,
+                 selenium_headless: bool = True,
+                 selenium_min_wait: int = 12,
+                 selenium_max_wait: int = 60,
                  logger: Optional["loguru.Logger"] = None
                  ) -> Try[PaperDownload]:
     """
@@ -228,10 +230,10 @@ def try_download(doi: str,
     if unpaywall_email is not None and p.url is None:
         UnpywallCredentials(unpaywall_email)
         p.url = Unpywall.get_pdf_link(doi)
-    try_simple = Try.of(lambda: p.with_pdf(simple_download(p.url, paper, logger = logger)))
+    try_simple = Try.of(lambda: p.with_pdf(simple_download(p.url, paper, logger=logger)))
     if selenium_on_fail and p.url is not None:
         from getpaper.selenium_download import download_pdf_selenium
-        logger.trace(f"paper to download with selenium is {p}")
+        logger.debug(f"paper to download with selenium is {p}")
         before_last = try_simple.catch(lambda ex: p.with_pdf(download_pdf_selenium(p.url, destination, selenium_headless, selenium_min_wait, selenium_max_wait, final_path=paper, logger=logger)))
     else:
         before_last = try_simple
@@ -269,7 +271,9 @@ async def download_async(executor: Executor,
         destination (Path): The directory where the downloaded paper should be stored.
         skip_if_exist (bool): If True, skip the download if the paper already exists in the destination. Default is True.
         name (Optional[str]): The name of the file to save the paper as. If not provided, use the DOI. Default is None.
-        param scihub_on_fail: if SciHub should be used as back up resolver. False by default. For paywalled articles it can be illegal in some of the countries, so use it at your own risk.
+        param scihub_on_fail: if SciHub should be used as back up resolver. False by default.
+            For paywalled articles it can be illegal in some of the countries, so use it at your own risk.
+        logger: Logger class, defaulted to loguru.logger
 
 
     Returns:
@@ -286,26 +290,53 @@ async def download_async(executor: Executor,
     # Get a reference to the current event loop
     loop = asyncio.get_event_loop()
 
-    _ = await loop.run_in_executor(executor, lambda: try_download(doi, destination, skip_if_exist, name, scihub_on_fail, logger))
+    _ = await loop.run_in_executor(
+        executor,
+        lambda: try_download(
+            doi,
+            destination,
+            skip_if_exist,
+            name,
+            scihub_on_fail,
+            logger=logger
+        )
+    )
 
     # Return the DOI and path to the downloaded paper
     return PaperDownload(doi, paper, meta)
 
 
-def download_papers(dois: List[str], destination: Path, threads: int, scihub_on_fail: bool = False, logger: Optional["loguru.Logger"] = None) -> (OrderedDict[str, PaperDownload], List[str]):
+def download_papers(
+        dois: List[str],
+        destination: Path,
+        threads: int,
+        scihub_on_fail: bool = False,
+        logger: Optional["loguru.Logger"] = None
+) -> (OrderedDict[str, PaperDownload], List[str]):
     """
     :param dois: List of DOIs of the papers to download
     :param destination: Directory where to put the downloaded papers
     :param threads: Maximum number of concurrent downloads
-    :param scihub_on_fail: if SciHub should be used as back up resolver. False by default. For paywalled articles it can be illegal in some of the countries, so use it at your own risk.
+    :param scihub_on_fail: if SciHub should be used as back up resolver. False by default.
+        For paywalled articles it can be illegal in some of the countries, so use it at your own risk.
+    :param logger: logger class to log stuff, probably compatible with logging.Logger, but use on your own risk.
     :return: tuple with OrderedDict of succeeded results and list of failed dois)
     """
+    if not logger:
+        logger = loguru.logger
     nest_asyncio.apply()
     # Create a ThreadPoolExecutor with desired number of threads
     with ThreadPoolExecutor(max_workers=threads) as executor:
         # Create a coroutine for each download
-        coroutines = [download_async(executor, doi, destination, scihub_on_fail=scihub_on_fail) for doi in dois]
-        #TODO: can be problematic
+        coroutines = [
+            download_async(
+                executor,
+                doi,
+                destination,
+                scihub_on_fail=scihub_on_fail,
+                logger=logger
+            ) for doi in dois]
+        # TODO: can be problematic
         # Get the current event loop, run the downloads, and wait for all of them to finish
         loop = asyncio.get_event_loop()
         results: List[PaperDownload | Exception] = loop.run_until_complete(asyncio.gather(*coroutines, return_exceptions=True))
